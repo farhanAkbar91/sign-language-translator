@@ -1,2 +1,71 @@
+# ==========================================
+# Virtual Environments & Packages
+# ==========================================
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# ==========================================
+# Python Cache & Compiled Files
+# ==========================================
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# ==========================================
+# Environment Variables & Secrets (Kunci API)
+# ==========================================
+.env
+.env.local
+*.pem
+*.key
+
+# ==========================================
+# Datasets & Data Files (File Besar)
+# ==========================================
+data/
+datasets/
+*.csv
+*.tsv
+*.parquet
+*.jsonl
+*.h5
+*.hdf5
+*.zip
+*.tar.gz
+
+# ==========================================
+# Model Weights, Checkpoints & Artifacts
+# ==========================================
+models/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+*.pkl
+*.pickle
+*.joblib
+runs/
+wandb/
+tensorboard/
+
+# ==========================================
+# Jupyter Notebooks & Logs
+# ==========================================
+.ipynb_checkpoints
+*.log
+
+# ==========================================
+# IDE & Operating System
+# ==========================================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

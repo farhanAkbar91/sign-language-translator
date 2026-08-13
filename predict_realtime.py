@@ -55,19 +55,27 @@ def extract_keypoints(results):
 def main():
     if not HAS_SOLUTIONS:
         print("\n[ERROR] Modul 'mediapipe.solutions' tidak ditemukan.")
-        print("Silakan jalankan dengan Python 3.11: py -3.11 predict_realtime.py")
+        print("Silakan jalankan via virtual environment Python 3.11:")
+        print("  .venv\\Scripts\\python predict_realtime.py")
         return
 
     if not os.path.exists(MODEL_PATH):
         print(f"\n[ERROR] File model '{MODEL_PATH}' belum ada!")
-        print("Silakan jalankan `py -3.11 train_model.py` terlebih dahulu untuk melatih model.")
+        print("Silakan jalankan `.venv\\Scripts\\python train_model.py` terlebih dahulu untuk melatih model.")
         return
+
+    # Muat kelas aktif dari actions.npy jika ada
+    if os.path.exists('actions.npy'):
+        actions = np.load('actions.npy')
+    else:
+        actions = ACTIONS
 
     from tensorflow.keras.models import load_model
 
     print(f"Memuat model '{MODEL_PATH}'...")
     model = load_model(MODEL_PATH)
-    print("Model berhasil dimuat! Membuka webcam...")
+    print(f"Model berhasil dimuat! ({len(actions)} kelas: {actions})")
+    print("Membuka webcam...")
 
     sequence = []
     sentence = []
@@ -76,7 +84,9 @@ def main():
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("Gagal membuka webcam.")
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        print("Gagal membuka webcam. Pastikan webcam terhubung dan tidak sedang digunakan aplikasi lain.")
         return
 
     with mp_holistic.Holistic(min_detection_confidence=0.5, min_tracking_confidence=0.5) as holistic:
@@ -94,27 +104,31 @@ def main():
             sequence = sequence[-30:]  # Pertahankan 30 frame terakhir
 
             if len(sequence) == 30:
-                res = model.predict(np.expand_dims(sequence, axis=0), verbose=0)[0]
-                best_class_idx = np.argmax(res)
-                confidence = res[best_class_idx]
+                input_data = np.expand_dims(sequence, axis=0)
+                # Gunakan pemanggilan model langsung (Fast inference tanpa overhead predict)
+                res = model(input_data, training=False).numpy()[0]
+                best_class_idx = int(np.argmax(res))
+                confidence = float(res[best_class_idx])
                 predictions.append(best_class_idx)
 
                 # Logika kestabilan prediksi (5 frame berturut-turut konsisten)
-                if np.unique(predictions[-5:])[0] == best_class_idx:
+                if len(predictions) >= 5 and len(set(predictions[-5:])) == 1:
                     if confidence > threshold:
-                        predicted_action = ACTIONS[best_class_idx]
-                        if len(sentence) > 0:
-                            if predicted_action != sentence[-1]:
+                        if best_class_idx < len(actions):
+                            predicted_action = actions[best_class_idx]
+                            if len(sentence) > 0:
+                                if predicted_action != sentence[-1]:
+                                    sentence.append(predicted_action)
+                            else:
                                 sentence.append(predicted_action)
-                        else:
-                            sentence.append(predicted_action)
 
                 if len(sentence) > 5:
                     sentence = sentence[-5:]
 
                 # Tampilkan hasil di bagian atas layar
                 cv2.rectangle(image, (0, 0), (640, 40), (245, 117, 16), -1)
-                text = f"Deteksi: {ACTIONS[best_class_idx]} ({confidence*100:.1f}%)"
+                predicted_name = actions[best_class_idx] if best_class_idx < len(actions) else "Unknown"
+                text = f"Deteksi: {predicted_name} ({confidence*100:.1f}%)"
                 cv2.putText(image, text, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
 
                 # Tampilkan riwayat kata/kalimat di bagian bawah layar

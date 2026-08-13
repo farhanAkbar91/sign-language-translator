@@ -107,14 +107,41 @@ def collect_data():
         print(f"Versi Python aktif: {sys.version.split()[0]}")
         print("MediaPipe Holistic memerlukan Python 3.11 atau 3.10.\n")
         print("Langkah untuk menjalankannya:")
-        print("  1. Pastikan Python 3.11 terinstall (jalankan: py -3.11 --version)")
-        print("  2. Install library pada Python 3.11: py -3.11 -m pip install opencv-python numpy mediapipe")
-        print("  3. Jalankan skrip dengan: py -3.11 collect_data.py")
+        print("  Jalankan via virtual environment Python 3.11:")
+        print("  .venv\\Scripts\\python collect_data.py")
         return
 
     create_data_folders()
     
+    print("\n==========================================")
+    print("--- MENU PENGUMPULAN DATA BISINDO ---")
+    print("==========================================")
+    print("0. Rekam SEMUA kata (1 - 20) secara berurutan")
+    for idx, act in enumerate(ACTIONS, 1):
+        print(f"{idx:2d}. {act}")
+    
+    try:
+        choice = input("\nPilih nomor kata yang ingin direkam (0-20, default 0): ").strip()
+    except Exception:
+        choice = '0'
+
+    if choice == '' or choice == '0':
+        selected_actions = ACTIONS
+    else:
+        try:
+            val = int(choice)
+            if 1 <= val <= len(ACTIONS):
+                selected_actions = np.array([ACTIONS[val - 1]])
+            else:
+                print("Pilihan tidak valid, merekam seluruh kata.")
+                selected_actions = ACTIONS
+        except ValueError:
+            print("Input tidak valid, merekam seluruh kata.")
+            selected_actions = ACTIONS
+
     cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     if not cap.isOpened():
         print("Gagal membuka kamera. Pastikan webcam terhubung dan tidak sedang digunakan oleh aplikasi lain.")
         return
@@ -123,25 +150,16 @@ def collect_data():
 
     # Inisialisasi model MediaPipe Holistic
     with mp_holistic.Holistic(min_detection_confidence=0.5, min_tracking_confidence=0.5) as holistic:
-        for action in ACTIONS:
+        for action in selected_actions:
             if cancelled:
                 break
+            print(f"\n---> Memulai perekaman untuk kata: '{action}'")
             for sequence in range(NO_SEQUENCES):
                 if cancelled:
                     break
                 for frame_num in range(SEQUENCE_LENGTH):
 
-                    ret, frame = cap.read()
-                    if not ret:
-                        print("Gagal membaca frame dari kamera.")
-                        cancelled = True
-                        break
-
-                    # Deteksi
-                    image, results = mediapipe_detection(frame, holistic)
-                    draw_styled_landmarks(image, results)
-
-                    # Logika Jeda/Countdown sebelum merekam klip baru
+                    # Logika Jeda/Countdown sebelum merekam klip baru (saat frame_num == 0)
                     if frame_num == 0:
                         start_time = time.time()
                         countdown_sec = 2
@@ -152,10 +170,10 @@ def collect_data():
                             image, results = mediapipe_detection(frame, holistic)
                             draw_styled_landmarks(image, results)
                             
-                            time_left = int(countdown_sec - (time.time() - start_time)) + 1
+                            time_left = max(1, int(countdown_sec - (time.time() - start_time) + 0.9))
                             cv2.putText(image, f'BERSIAP Dalam {time_left}s...', (120, 200),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 4, cv2.LINE_AA)
-                            cv2.putText(image, f'Merekam "{action}" - Klip #{sequence + 1}', (15, 30),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 3, cv2.LINE_AA)
+                            cv2.putText(image, f'Merekam "{action}" - Klip #{sequence + 1}/{NO_SEQUENCES}', (15, 30),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
                             cv2.imshow('BISINDO Data Collection', image)
                             
@@ -165,10 +183,27 @@ def collect_data():
                         
                         if cancelled:
                             break
+
+                        # Frame pertama sebenarnya setelah countdown
+                        ret, frame = cap.read()
+                        if not ret:
+                            cancelled = True
+                            break
+                        image, results = mediapipe_detection(frame, holistic)
+                        draw_styled_landmarks(image, results)
                     else:
-                        cv2.putText(image, f'Merekam "{action}" - Klip #{sequence + 1} (Frame {frame_num})', (15, 30),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
-                        cv2.imshow('BISINDO Data Collection', image)
+                        ret, frame = cap.read()
+                        if not ret:
+                            print("Gagal membaca frame dari kamera.")
+                            cancelled = True
+                            break
+
+                        image, results = mediapipe_detection(frame, holistic)
+                        draw_styled_landmarks(image, results)
+
+                    cv2.putText(image, f'Merekam "{action}" - Klip #{sequence + 1}/{NO_SEQUENCES} (Frame {frame_num + 1}/{SEQUENCE_LENGTH})', (15, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
+                    cv2.imshow('BISINDO Data Collection', image)
 
                     # Ekstraksi dan Simpan Fitur ke file .npy
                     keypoints = extract_keypoints(results)
@@ -185,7 +220,7 @@ def collect_data():
     if cancelled:
         print("\nPengumpulan data dihentikan oleh pengguna.")
     else:
-        print("\nPengumpulan data 20 kosakata Dukcapil selesai!")
+        print("\nPengumpulan data selesai!")
 
 if __name__ == '__main__':
     collect_data()

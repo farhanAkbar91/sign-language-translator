@@ -31,17 +31,20 @@ LOG_DIR = os.path.join('Logs')
 # ==========================================
 # 2. PROSES MEMUAT DATASET
 # ==========================================
+# ==========================================
+# 2. PROSES MEMUAT DATASET
+# ==========================================
 def load_dataset():
-    label_map = {label: num for num, label in enumerate(ACTIONS)}
-    sequences, labels = [], []
-
     print("Memuat dataset dari folder Data_BISINDO...")
-    missing_actions = []
+    
+    # Deteksi kelas/kata mana saja yang memiliki data
+    active_actions = []
+    sequences, labels = [], []
+    action_counts = {}
 
     for action in ACTIONS:
         action_path = os.path.join(DATA_PATH, action)
         if not os.path.exists(action_path):
-            missing_actions.append(action)
             continue
 
         sample_count = 0
@@ -56,25 +59,59 @@ def load_dataset():
                     break
 
             if len(window) == SEQUENCE_LENGTH:
-                sequences.append(window)
-                labels.append(label_map[action])
                 sample_count += 1
 
-        print(f" - [{action}]: {sample_count}/{NO_SEQUENCES} sampel dimuat.")
+        if sample_count > 0:
+            active_actions.append(action)
+            action_counts[action] = sample_count
 
-    if len(sequences) == 0:
+    if len(active_actions) == 0:
         print("\n[ERROR] Tidak ada data .npy yang ditemukan!")
-        print("Silakan rekam dataset terlebih dahulu dengan menjalankan `py -3.11 collect_data.py`.")
+        print("Silakan rekam dataset terlebih dahulu dengan menjalankan:")
+        print("  .venv\\Scripts\\python collect_data.py")
         sys.exit(1)
 
+    print("\nRingkasan Sampel Terdeteksi:")
+    for act in ACTIONS:
+        cnt = action_counts.get(act, 0)
+        print(f" - [{act}]: {cnt}/{NO_SEQUENCES} sampel dimuat.")
+
+    if len(active_actions) < 2:
+        print(f"\n[PERINGATAN] Baru {len(active_actions)} kata ({active_actions}) yang memiliki sampel data.")
+        print("Minimal diperlukan 2 kata yang memiliki data untuk melatih model klasifikasi.")
+        print("Silakan jalankan `collect_data.py` untuk merekam kata lainnya.")
+        sys.exit(1)
+
+    # Buat label map khusus untuk kelas yang aktif saja
+    active_actions = np.array(active_actions)
+    label_map = {label: num for num, label in enumerate(active_actions)}
+
+    for action in active_actions:
+        for sequence in range(NO_SEQUENCES):
+            window = []
+            for frame_num in range(SEQUENCE_LENGTH):
+                res_path = os.path.join(DATA_PATH, action, str(sequence), f"{frame_num}.npy")
+                if os.path.exists(res_path):
+                    res = np.load(res_path)
+                    window.append(res)
+                else:
+                    break
+
+            if len(window) == SEQUENCE_LENGTH:
+                sequences.append(window)
+                labels.append(label_map[action])
+
     X = np.array(sequences)
-    y = to_categorical(labels, num_classes=len(ACTIONS))
+    y = to_categorical(labels, num_classes=len(active_actions))
 
     print(f"\nTotal Sampel Dimuat: {X.shape[0]}")
     print(f"Shape Fitur (X): {X.shape}")
     print(f"Shape Label (y): {y.shape}")
 
-    return X, y, labels
+    # Simpan daftar kelas aktif agar dipakai oleh predict_realtime.py
+    np.save('actions.npy', active_actions)
+
+    return X, y, labels, active_actions
 
 # ==========================================
 # 3. MEMBANGUN MODEL LSTM
@@ -103,18 +140,28 @@ def build_lstm_model(input_shape, num_classes):
 # 4. TRAINING LOOP & EVALUASI
 # ==========================================
 def train():
-    X, y, raw_labels = load_dataset()
+    X, y, raw_labels, active_actions = load_dataset()
 
-    # Split dataset 90% Train, 10% Test
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.1, random_state=42, stratify=raw_labels
-    )
+    # Cek apakah stratify memungkinkan (setiap kelas minimal harus 2 sampel)
+    from collections import Counter
+    label_counts = Counter(raw_labels)
+    can_stratify = all(count >= 2 for count in label_counts.values()) and (len(X) >= 5)
+
+    if can_stratify:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.1, random_state=42, stratify=raw_labels
+        )
+    else:
+        print("\n[INFO] Jumlah sampel per kelas terlalu sedikit untuk stratifikasi. Menggunakan split biasa.")
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.1, random_state=42
+        )
 
     print(f"\nUkuran Data Train: {X_train.shape[0]} sampel")
     print(f"Ukuran Data Test : {X_test.shape[0]} sampel")
 
     # Inisialisasi Model
-    model = build_lstm_model((SEQUENCE_LENGTH, FEATURE_DIM), len(ACTIONS))
+    model = build_lstm_model((SEQUENCE_LENGTH, FEATURE_DIM), len(active_actions))
     model.summary()
 
     # Callbacks
@@ -139,24 +186,25 @@ def train():
     # Simpan Model Akhir
     model.save(MODEL_NAME)
     print(f"\nModel berhasil disimpan ke '{MODEL_NAME}'.")
+    print("Daftar kelas tersimpan ke 'actions.npy'.")
 
     # Evaluasi Model
-    print("\n==========================================")
-    print("EVALUASI MODEL DENGAN DATA TEST")
-    print("==========================================")
-    y_pred = model.predict(X_test)
-    y_true_indices = np.argmax(y_test, axis=1)
-    y_pred_indices = np.argmax(y_pred, axis=1)
+    if len(X_test) > 0:
+        print("\n==========================================")
+        print("EVALUASI MODEL DENGAN DATA TEST")
+        print("==========================================")
+        y_pred = model.predict(X_test)
+        y_true_indices = np.argmax(y_test, axis=1)
+        y_pred_indices = np.argmax(y_pred, axis=1)
 
-    # Filter kelas yang ada pada data test
-    present_classes = sorted(list(set(y_true_indices) | set(y_pred_indices)))
-    target_names = [ACTIONS[i] for i in present_classes]
+        present_classes = sorted(list(set(y_true_indices) | set(y_pred_indices)))
+        target_names = [active_actions[i] for i in present_classes]
 
-    print("\nLaporan Klasifikasi (Classification Report):")
-    print(classification_report(y_true_indices, y_pred_indices, target_names=target_names))
+        print("\nLaporan Klasifikasi (Classification Report):")
+        print(classification_report(y_true_indices, y_pred_indices, labels=present_classes, target_names=target_names, zero_division=0))
 
-    print("Confusion Matrix:")
-    print(confusion_matrix(y_true_indices, y_pred_indices))
+        print("Confusion Matrix:")
+        print(confusion_matrix(y_true_indices, y_pred_indices))
 
 if __name__ == '__main__':
     train()
